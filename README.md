@@ -32,6 +32,17 @@ ml-deployment-p4/
 └── requirements.txt
 ```
 
+## Conventions de nommage des branches
+- `feature/nom` — nouvelle fonctionnalité
+- `fix/nom` — correction de bug
+- `hotfix/nom` — correction urgente en production
+
+### Branches du projet
+- `feature/api` — développement de l'API FastAPI
+- `feature/database` — mise en place de la base de données
+- `feature/tests` — écriture des tests
+- `feature/cicd` — configuration du pipeline CI/CD
+- `feature/docs` — documentation
 ## Tests
 ```bash
 pytest tests/
