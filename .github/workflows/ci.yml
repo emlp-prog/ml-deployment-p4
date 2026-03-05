@@ -30,5 +30,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name : Verification
-      run : |
-        python -c "print('pipeline executée')"
+        run : |
+          python -c "print('pipeline executée')"
