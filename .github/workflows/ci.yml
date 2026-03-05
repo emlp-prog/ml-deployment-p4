@@ -8,30 +8,26 @@ on:
       - feature/**
   pull_request:
     branches:
-     - main
+      - main
   workflow_dispatch:
 
 jobs:
   tests:
-  
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repos
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          
-      - name : Install dependencies
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name : Run tests
-        run : |
-          pytest -v --cov=app tests/
-      - name : Verification
-        run : |
-          python -c "print('pipeline executée')"
+
+      - name: Run tests
+        run: pytest -v --cov=app tests/
