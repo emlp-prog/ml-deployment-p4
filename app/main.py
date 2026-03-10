@@ -72,17 +72,19 @@ def predict(request: PredictRequest):
     response = PredictResponse(prediction=prediction)
 
 # Enregistrer les prédictions dans la base de données
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO predictions (input_payload, output_payload, model_version)
-                VALUES (%s, %s, %s)
-                """,
-                (
-                    Jsonb(request.model_dump()),
-                    Jsonb(response.model_dump()),
-                    "xgb_pipeline_v1",
-                ),
-            )
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO predictions (input_payload, output_payload, model_version)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (
+                        Jsonb(request.model_dump(exclude_none=True)),
+                        Jsonb(response.model_dump()),
+                        "xgb_pipeline_v1",
+                    ),
+                )
     return response
