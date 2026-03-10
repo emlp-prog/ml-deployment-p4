@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Optional
 import pandas as pd
 import psycopg
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ class PredictRequest(BaseModel):
     poste: Literal['Cadre Commercial', 'Assistant de Direction', 'Consultant', 'Tech Lead', 'Manager',
                    'Senior Manager', 'Représentant Commercial','Directeur Technique','Ressources Humaines']
     nombre_experiences_precedentes: int = Field(..., ge=0)
-    nombre_heures_travailless: int = Field(ge=0)                                    # Pas obligatoire pour la prédiction
+    nombre_heures_travailless: Optional[int] = Field(default=None, ge=0)                                    # Pas obligatoire pour la prédiction
     annee_experience_totale: int = Field(..., ge=0)
     annees_dans_l_entreprise: int = Field(..., ge=0)
     annees_dans_le_poste_actuel: int = Field(..., ge=0)
@@ -39,11 +39,11 @@ class PredictRequest(BaseModel):
     augementation_salaire_precedente: str = Field(..., pattern=r"^\d+(\.\d+)?\s%$")
     nombre_participation_pee: int = Field(..., ge=0)
     nb_formations_suivies: int = Field(..., ge=0)
-    nombre_employee_sous_responsabilite: int = Field(..., ge=0)                     # Pas obligatoire pour la prédiction
+    nombre_employee_sous_responsabilite: Optional[int] = Field(default=None, ge=0)                     # Pas obligatoire pour la prédiction
     distance_domicile_travail: float = Field(..., ge=0)
     niveau_education: int = Field(..., ge=0)
     domaine_etude: Literal['Infra & Cloud', 'Autre', 'Transformation Digitale', 'Marketing', 'Entrepreunariat', 'Ressources Humaines']
-    ayant_enfants: Literal["Y", "N"]                                                # Pas obligatoire pour la prédiction
+    ayant_enfants: Optional[Literal["Y", "N"]] = None                                                # Pas obligatoire pour la prédiction
     frequence_deplacement: Literal["Frequent", "Occasionnel", "Aucun"]
     annees_depuis_la_derniere_promotion: int = Field(..., ge=0)
     annes_sous_responsable_actuel: int = Field(..., ge=0)
