@@ -1,90 +1,123 @@
 import os
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from typing import Literal, Optional
-import pandas as pd
-import psycopg
-from dotenv import load_dotenv
+
 import joblib
-from ml_model.feature_engineering import AttritionFeatureEngineer
-from psycopg.types.json import Jsonb
+import pandas as pd
+from dotenv import load_dotenv
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
+
+from app.db import DatabaseError, get_employee_by_id, insert_prediction_log
 
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(
+    title="Employee Attrition API",
+    description="API de prediction du risque de depart d'un employe.",
+    version="1.0.0",
+)
+
 model = joblib.load("ml_model/model.joblib")
 
-class PredictRequest(BaseModel):
-    id_employee: int
-    age: int = Field(..., ge=0, le=150)
-    genre: Literal["M", "F"]
-    revenu_mensuel: float = Field(..., ge=0)
-    statut_marital: Literal['Célibataire', 'Marié(e)', 'Divorcé(e)']
-    departement: Literal['Commercial', 'Consulting', 'Ressources Humaines']
-    poste: Literal['Cadre Commercial', 'Assistant de Direction', 'Consultant', 'Tech Lead', 'Manager',
-                   'Senior Manager', 'Représentant Commercial','Directeur Technique','Ressources Humaines']
-    nombre_experiences_precedentes: int = Field(..., ge=0)
-    nombre_heures_travailless: Optional[int] = Field(default=None, ge=0)                                    # Pas obligatoire pour la prédiction
-    annee_experience_totale: int = Field(..., ge=0)
-    annees_dans_l_entreprise: int = Field(..., ge=0)
-    annees_dans_le_poste_actuel: int = Field(..., ge=0)
-    satisfaction_employee_environnement: int = Field(..., ge=1, le=5)
-    note_evaluation_precedente: int = Field(..., ge=1, le=5)
-    niveau_hierarchique_poste: int = Field(..., ge=1)
-    satisfaction_employee_nature_travail: int = Field(..., ge=1, le=5)
-    satisfaction_employee_equipe: int = Field(..., ge=1, le=5)
-    satisfaction_employee_equilibre_pro_perso: int = Field(..., ge=1, le=5)
-    note_evaluation_actuelle: int = Field(..., ge=1, le=5)
-    heure_supplementaires: Literal["Oui", "Non"]
-    augementation_salaire_precedente: str = Field(..., pattern=r"^\d+(\.\d+)?\s%$")
-    nombre_participation_pee: int = Field(..., ge=0)
-    nb_formations_suivies: int = Field(..., ge=0)
-    nombre_employee_sous_responsabilite: Optional[int] = Field(default=None, ge=0)                     # Pas obligatoire pour la prédiction
-    distance_domicile_travail: float = Field(..., ge=0)
-    niveau_education: int = Field(..., ge=0)
-    domaine_etude: Literal['Infra & Cloud', 'Autre', 'Transformation Digitale', 'Marketing', 'Entrepreunariat', 'Ressources Humaines']
-    ayant_enfants: Optional[Literal["Y", "N"]] = None                                                # Pas obligatoire pour la prédiction
-    frequence_deplacement: Literal["Frequent", "Occasionnel", "Aucun"]
-    annees_depuis_la_derniere_promotion: int = Field(..., ge=0)
-    annes_sous_responsable_actuel: int = Field(..., ge=0)
+
+class EmployeeRequest(BaseModel):
+    employee_id: int = Field(..., gt=0, description="Identifiant de l'employe")
+
 
 class PredictResponse(BaseModel):
+    employee_id: int
     prediction: int
 
-def get_conn():
-    db_url = os.environ.get("DATABASE_URL")
-    if not db_url:
-        raise ValueError("DATABASE_URL pas défini")
-    return psycopg.connect(db_url)
+
+class PredictProbaResponse(BaseModel):
+    employee_id: int
+    prediction: int
+    probability: float
+
+
+def check_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    expected_api_key = os.getenv("API_KEY")
+
+    if expected_api_key and x_api_key != expected_api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World"}
+    return {"message": "Employee Attrition API is running"}
+
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok"} 
+def health():
+    return {"status": "ok"}
+
 
 @app.post("/predict", response_model=PredictResponse)
-def predict(request: PredictRequest):
-    df = pd.DataFrame([request.model_dump()])
-    prediction = int(model.predict(df)[0])
-    response = PredictResponse(prediction=prediction)
+def predict(request: EmployeeRequest, x_api_key: str | None = Header(default=None)):
+    check_api_key(x_api_key)
 
-# Enregistrer les prédictions dans la base de données
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO predictions (input_payload, output_payload, model_version)
-                    VALUES (%s, %s, %s)
-                    """,
-                    (
-                        Jsonb(request.model_dump(exclude_none=True)),
-                        Jsonb(response.model_dump()),
-                        "xgb_pipeline_v1",
-                    ),
-                )
+    try:
+        employee = get_employee_by_id(request.employee_id)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    employee.pop("a_quitte_l_entreprise", None)
+    employee_df = pd.DataFrame([employee])
+
+    prediction = int(model.predict(employee_df)[0])
+
+    response = PredictResponse(
+        employee_id=request.employee_id,
+        prediction=prediction,
+    )
+
+    try:
+        insert_prediction_log(
+            employee_id=request.employee_id,
+            endpoint="predict",
+            input_payload=request.model_dump(),
+            output_payload=response.model_dump(),
+        )
+    except DatabaseError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return response
+
+
+@app.post("/predict_proba", response_model=PredictProbaResponse)
+def predict_proba(request: EmployeeRequest, x_api_key: str | None = Header(default=None)):
+    check_api_key(x_api_key)
+
+    try:
+        employee = get_employee_by_id(request.employee_id)
+    except DatabaseError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    employee.pop("a_quitte_l_entreprise", None)
+    employee_df = pd.DataFrame([employee])
+
+    prediction = int(model.predict(employee_df)[0])
+    probability = float(model.predict_proba(employee_df)[0][1])
+
+    response = PredictProbaResponse(
+        employee_id=request.employee_id,
+        prediction=prediction,
+        probability=probability,
+    )
+
+    try:
+        insert_prediction_log(
+            employee_id=request.employee_id,
+            endpoint="predict_proba",
+            input_payload=request.model_dump(),
+            output_payload=response.model_dump(),
+        )
+    except DatabaseError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return response
