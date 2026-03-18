@@ -3,204 +3,279 @@ title: ml-deployment-p4
 sdk: docker
 app_port: 7860
 ---
-# ML Deployment
 
-Ce projet déploie un modèle de machine learning permettant de prédire le départ potentiel d'un employé.  
-Le modèle est exposé via une API FastAPI et les prédictions sont enregistrées dans une base PostgreSQL afin d'assurer la traçabilité.
+# ml-deployment-p4
+
+Ce projet deploie un modele de machine learning capable d'estimer le risque de depart d'un employe.
+L'application est exposee via une API FastAPI, les donnees employees sont lues depuis PostgreSQL, et chaque appel de prediction est historise dans une table de logs.
+
+## Objectif
+
+L'objectif du projet est de montrer un cycle simple de deploiement ML :
+- stocker les donnees employees en base
+- exposer un modele via une API
+- predire a partir d'un `employee_id`
+- tracer les appels de prediction
+- tester et deployer automatiquement l'application
 
 ## Architecture du projet
 
-- API REST développée avec **FastAPI**
-- Validation des données avec **Pydantic**
-- Modèle ML : **XGBoost pipeline**
-- Base de données : **PostgreSQL**
-- Tests : **Pytest**
-- CI : **GitHub Actions**
+- API REST developpee avec FastAPI
+- Validation des entrees avec Pydantic
+- Modele ML sauvegarde dans `ml_model/model.joblib`
+- Base de donnees PostgreSQL
+- Tests automatises avec Pytest
+- Pipeline CI/CD avec GitHub Actions
+- Deploiement cible vers Hugging Face Spaces
+
+## Structure de la base de donnees
+
+Le projet repose sur deux tables principales :
+
+- `employees` : contient les donnees du dataset employees utilisees pour alimenter le modele
+- `prediction_logs` : contient les logs des appels API
+
+### Table `employees`
+
+Cette table contient les caracteristiques utiles a la prediction, par exemple :
+- `id_employee`
+- `age`
+- `genre`
+- `revenu_mensuel`
+- `departement`
+- `poste`
+- `distance_domicile_travail`
+- `frequence_deplacement`
+
+### Table `prediction_logs`
+
+Cette table contient :
+- `employee_id`
+- `endpoint`
+- `input_payload`
+- `output_payload`
+- `model_version`
+- `created_at`
+
+Le schema detaille est disponible dans [docs/schema_bdd.md](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/docs/schema_bdd.md).
 
 ## Installation
 
-### Cloner le repository :
+### 1. Cloner le projet
 
 ```bash
-git clone https://github.com/emlp-prog/ml-deployment-p4.git
+git clone <url-du-repository>
 cd ml-deployment-p4
 ```
 
-### Créer un environnement virtuel :
-Linux / Mac :
-```bash
-python -m venv venv
-source venv/bin/activate
-```
-Windows :
+### 2. Creer l'environnement virtuel
+
+Sous Windows :
+
 ```bash
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
-### Installer les dépendances :
+### 3. Installer les dependances
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Configuration
+## Configuration
 
-Le projet utilise une variable d'environnement pour la base PostgreSQL :
+Le projet utilise un fichier `.env` local pour stocker les variables de configuration.
+Creer ce fichier a partir de `.env.example`.
 
-```text
-DATABASE_URL=postgresql://postgres:mot_de_passe@localhost:5432/ml_api
+Exemple :
+
+```env
+DATABASE_URL=postgresql://postgres:password@localhost:5432/ml_api
+MODEL_VERSION=xgb_pipeline_v1
+API_KEY=change_me
+HF_SPACE_ID=username/ml-deployment-p4
 ```
-Créer un fichier .env à la racine du projet à partir de .env.example.
+
+### Variables importantes
+
+- `DATABASE_URL` : connexion PostgreSQL
+- `MODEL_VERSION` : version du modele stockee dans les logs
+- `API_KEY` : cle API optionnelle pour proteger les endpoints
+- `HF_SPACE_ID` : identifiant du Space Hugging Face
+
+## Initialisation de la base
+
+Le script [scripts/init_db.py](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/scripts/init_db.py) :
+- lit le fichier SQL
+- cree les tables PostgreSQL
+- charge le dataset CSV dans la table `employees`
+
+Commande :
+
+```bash
+python scripts/init_db.py
+```
+
+Le script SQL utilise est [scripts/create_db.sql](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/scripts/create_db.sql).
 
 ## Lancer l'API
 
 ```bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 5050
 ```
-### Documentation de l'API
 
-Une fois l'API lancée, la documentation interactive Swagger est accessible à l'adresse :
+Documentation interactive :
 
 ```text
 http://127.0.0.1:5050/docs
 ```
 
-## Endpoints principaux
+## Endpoints disponibles
 
-### POST /predict
+### `GET /health`
 
-Cet endpoint reçoit les données brutes d'un employé au format JSON, exécute le pipeline de prédiction et retourne le résultat.
-Des exemples de données peuvent être trouvés dans data/example_data.json.
+Permet de verifier que l'API fonctionne.
 
-Le payload envoyé à l'API est validé avec Pydantic avant la prédiction.
+Reponse :
 
-Exemple de réponse :
-```json
-{
-  "prediction": 0
-}
-```
-### GET /health
-
-Endpoint simple de vérification de santé de l'API.
-Réponse :
 ```json
 {
   "status": "ok"
 }
 ```
 
-## Base de données
+### `POST /predict`
 
-Le projet utilise une base PostgreSQL locale nommée ml_api.
+Entree :
 
-La base sert à deux usages :
-
-- stocker le dataset complet
-
-- enregistrer les prédictions générées par l'API
-
-### Initialiser la base
-
-Créer les tables :
-
-```bash
-psql -U postgres -d ml_api -f scripts/create_db.sql
+```json
+{
+  "employee_id": 1
+}
 ```
 
-Importer le dataset :
+Traitement :
+- l'API lit l'employe dans `employees`
+- elle transforme la ligne en `DataFrame`
+- elle appelle le modele
+- elle ecrit un log dans `prediction_logs`
 
-```bash
-\copy employee_attrition_dataset
-FROM 'data/employee_attrition_dataset.csv'
-WITH (FORMAT csv, HEADER true, DELIMITER ',');
+Reponse :
+
+```json
+{
+  "employee_id": 1,
+  "prediction": 1
+}
 ```
-Vérifier l'import :
-```bash
-SELECT COUNT(*) FROM employee_attrition_dataset;
+
+### `POST /predict_proba`
+
+Entree :
+
+```json
+{
+  "employee_id": 1
+}
 ```
-Schéma de la base de données :
-Visible dans docs/schema_bdd.md
 
-Traçabilité :
+Reponse :
 
-Chaque appel valide à l'endpoint /predict peut être enregistré dans la table predictions avec :
-- les données d'entrée envoyées au modèle
-- la réponse produite par le modèle
-- la version du modèle utilisée
-- la date de création
-Cela permet d'assurer une traçabilité complète des échanges entre l'API, le modèle et la base de données.
-
-Le fichier `scripts/query_predictions.sql` contient des requêtes SQL permettant de consulter les prédictions enregistrées dans la base.
-
-## Modèle de machine learning
-
-Le modèle utilisé est un pipeline sauvegardé dans :
-
-```text
-ml_model/model.joblib
+```json
+{
+  "employee_id": 1,
+  "prediction": 1,
+  "probability": 0.81
+}
 ```
-Ce pipeline inclut :
-- le feature engineering métier
-- le modèle XGBoost
-- la logique de transformation nécessaire avant prédiction
-
-Le fichier ```text ml_model/feature_engineering.py ``` contient la classe AttritionFeatureEngineer utilisée par le pipeline.
 
 ## Tests
 
-Les tests sont réalisés avec Pytest.
-Les tests couvrent le endpoint /health, le endpoint /predict, les cas d'erreur de validation, les valeurs invalides, les catégories interdites, les champs optionnels
-Exécuter les tests :
+Les tests Pytest couvrent :
+- `/health`
+- `/predict`
+- `/predict_proba`
+- le cas employe introuvable
+- les erreurs de validation
+- l'appel de la fonction de log
+
+Commande :
+
 ```bash
-pytest -v
+python -m pytest -v --cov=app --cov-report=term-missing tests
 ```
-Rapport :
-```bash
-pytest --cov=app --cov-report=term-missing
-```
-## CI / CD
-Le projet utilise GitHub Actions pour exécuter automatiquement les tests à chaque push.
-Le pipeline CI vérifie l'installation des dépendances et l'exécution des tests Pytest.
 
-## Jeu de données
+## CI/CD
 
-Le dataset utilisé dans ce projet provient du projet de classification RH et contient 1470 observations.
-Le dataset fusionné complet est stocké dans PostgreSQL dans la table employee_attrition_dataset
+Le workflow GitHub Actions est dans [ci.yml](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/.github/workflows/ci.yml).
 
-## Gestion des secrets et sécurité
+Il permet :
+- d'executer les tests sur `push` et `pull_request`
+- de deployer automatiquement vers Hugging Face Spaces sur `main`
 
-Le projet utilise des variables d'environnement pour gérer les informations sensibles, notamment la connexion à PostgreSQL via `DATABASE_URL`.
+## Deploiement vers Hugging Face
 
-Le fichier `.env` ne doit pas être versionné dans le dépôt Git.  
-Un fichier `.env.example` est fourni comme exemple de configuration.
+Le deploiement est gere par [deploy_to_hf.py](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/scripts/deploy_to_hf.py).
 
-Aucun secret n'est stocké directement dans le code source.
+Pour que GitHub Actions puisse deployer, il faut ajouter dans GitHub :
+- `HF_TOKEN`
+- `HF_SPACE_ID`
 
-À ce stade, l'API ne met pas en place de mécanisme d'authentification applicative (JWT, API key, login/mot de passe).  
-Le projet est présenté comme un POC technique centré sur le déploiement du modèle, l'API, les tests et la traçabilité des prédictions.
+Dans Hugging Face Spaces, il faut ensuite configurer les variables utiles a l'application, par exemple :
+- `DATABASE_URL`
+- `API_KEY`
+- `MODEL_VERSION`
 
-## Déploiement
+## Gestion des secrets et securite
 
-L'API a vocation à être déployée sur une plateforme cloud telle que **Hugging Face Spaces**.
+Les informations sensibles ne sont pas stockees dans le code source.
 
-Le déploiement permet de rendre l'API accessible via une URL publique et de démontrer l'utilisation du modèle en dehors de l'environnement local.
+Bonnes pratiques appliquees :
+- le fichier `.env` local ne doit pas etre versionne
+- les tokens de deploiement sont stockes dans GitHub Secrets
+- la connexion a la base se fait via `DATABASE_URL`
+- l'API peut etre protegee par une cle `API_KEY`
 
-Une fois le déploiement effectué, la documentation interactive reste accessible via l'endpoint `/docs`.
+## Workflow Git recommande
 
-## Gestion et exploitation des données
+Convention de branches :
+- `develop`
+- `feature/database`
+- `feature/api`
+- `feature/tests`
+- `feature/docs`
+- `feature/cicd`
+- `main`
 
-Le stockage des données repose sur deux tables principales :
+Flux recommande :
+1. creer une branche feature depuis `develop`
+2. developper la fonctionnalite
+3. commit et push sur la branche
+4. ouvrir une Pull Request vers `develop`
+5. une fois les features validees, merger `develop` vers `main`
 
-- `employee_attrition_dataset` : contient le dataset complet utilisé dans le projet
-- `predictions` : contient les entrées et sorties des prédictions effectuées via l'API
+## Exploitation des donnees
 
-## Versions
+La table `prediction_logs` permet ensuite :
+- de suivre les requetes de prediction
+- d'analyser l'usage de l'API
+- d'identifier les predictions produites par version de modele
+- d'alimenter un tableau de bord simple si besoin
 
-Le projet utilise Git pour le versionnage du code.
-Un tag v1.0 a été créé pour marquer une première version fonctionnelle du projet.
+## Fichiers principaux
 
-## Conclusion
+- [app/main.py](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/app/main.py) : logique des endpoints FastAPI
+- [app/db.py](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/app/db.py) : lecture et ecriture en base
+- [scripts/init_db.py](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/scripts/init_db.py) : initialisation PostgreSQL
+- [scripts/create_db.sql](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/scripts/create_db.sql) : schema SQL
+- [tests/test_api.py](/c:/Users/Emile/Cours/python/projet-5/ml-deployment-p4/tests/test_api.py) : tests de l'API
 
-Ce projet fournit une API de prédiction fonctionnelle, testée et intégrée à une base PostgreSQL locale, avec une logique de traçabilité complète des entrées et sorties du modèle.
+## Resume
+
+Ce projet fournit une architecture simple et pedagogique pour deployer un modele ML :
+- des donnees employees en PostgreSQL
+- une API FastAPI par `employee_id`
+- des logs de prediction
+- des tests automatises
+- un pipeline CI/CD vers Hugging Face Spaces
